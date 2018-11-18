@@ -4,11 +4,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem;
 use std::time::{Duration, Instant};
 
-pub trait ExpMap<'a> {
-    fn get<'b>(&'a mut self, key: u32) -> Option<&'b str>
-    where
-        'a: 'b;
-    fn put(&mut self, key: u32, value: String, duration: Duration);
+pub trait TtlSet {
+    fn insert(&mut self, item: u64, duration: Duration);
+    // &mut because we want to permit cleanup operations
+    fn contains(&mut self, item: u64) -> bool;
 }
 
 pub trait Clock {
@@ -27,155 +26,139 @@ impl FakeClock {
     }
 }
 
-pub struct MonotonicImpl<C: Clock> {
-    key_map: HashMap<u32, Wrapper>,
+pub struct ReadTimeRedacter<C: Clock> {
     clock: C,
-}
-struct Wrapper {
-    value: String,
-    expiry: Instant,
+    expiration_times: HashMap<u64, Instant>,
 }
 
-impl MonotonicImpl<FakeClock> {
-    fn new() -> MonotonicImpl<FakeClock> {
-        MonotonicImpl {
-            key_map: HashMap::new(),
+impl ReadTimeRedacter<FakeClock> {
+    fn new() -> ReadTimeRedacter<FakeClock> {
+        ReadTimeRedacter {
             clock: FakeClock(Instant::now()),
+            expiration_times: HashMap::new(),
         }
     }
 }
 
-impl<'a, C: Clock> ExpMap<'a> for MonotonicImpl<C> {
-    fn get<'b>(&'a mut self, key: u32) -> Option<&'b str>
-    where
-        'a: 'b,
-    {
-        let wrap = self.key_map.get(&key)?;
-        if self.clock.now() < wrap.expiry {
-            Some(&wrap.value)
-        } else {
-            None
-        }
+impl<C: Clock> TtlSet for ReadTimeRedacter<C> {
+    fn insert(&mut self, item: u64, duration: Duration) {
+        self.expiration_times
+            .insert(item, self.clock.now() + duration);
     }
 
-    fn put(&mut self, key: u32, value: String, duration: Duration) {
-        self.key_map.insert(
-            key,
-            Wrapper {
-                value,
-                expiry: self.clock.now() + duration,
-            },
-        );
+    fn contains(&mut self, key: u64) -> bool {
+        match self.expiration_times.get(&key) {
+            Some(expires_at) => self.clock.now() < *expires_at,
+            None => false,
+        }
     }
 }
 
-pub struct IncrementalImpl<C: Clock> {
-    key_map: HashMap<u32, Wrapper>,
-    expiry_map: BTreeMap<Instant, HashSet<u32>>,
+pub struct TreeCleanup<C: Clock> {
     clock: C,
+    expiration_times: HashMap<u64, Instant>,
+    expiration_index: BTreeMap<Instant, HashSet<u64>>,
 }
-impl IncrementalImpl<FakeClock> {
-    fn new() -> IncrementalImpl<FakeClock> {
-        IncrementalImpl {
-            key_map: HashMap::new(),
-            expiry_map: BTreeMap::new(),
+impl TreeCleanup<FakeClock> {
+    fn new() -> TreeCleanup<FakeClock> {
+        TreeCleanup {
             clock: FakeClock(Instant::now()),
+            expiration_times: HashMap::new(),
+            expiration_index: BTreeMap::new(),
         }
     }
 }
 
-impl<C: Clock> IncrementalImpl<C> {
+impl<C: Clock> TreeCleanup<C> {
     fn incremental_clean(&mut self, threshold: Instant) {
-        let mut tmp = self.expiry_map.split_off(&threshold);
-        mem::swap(&mut self.expiry_map, &mut tmp);
+        let mut tmp = self.expiration_index.split_off(&threshold);
+        mem::swap(&mut self.expiration_index, &mut tmp);
         for (_expiry, ids) in tmp {
             for id in ids {
-                self.key_map.remove(&id);
+                self.expiration_times.remove(&id);
             }
         }
     }
 }
 
-impl<'a, C: Clock> ExpMap<'a> for IncrementalImpl<C> {
-    fn get<'b>(&'a mut self, key: u32) -> Option<&'b str>
-    where
-        'a: 'b,
-    {
-        let now = self.clock.now();
-        self.incremental_clean(now);
-        let wrapper = self.key_map.get(&key)?;
-        Some(&wrapper.value)
-    }
-
-    fn put(&mut self, key: u32, value: String, duration: Duration) {
+impl<C: Clock> TtlSet for TreeCleanup<C> {
+    fn insert(&mut self, item: u64, duration: Duration) {
         let expiry = self.clock.now() + duration;
-        if let Some(prev) = self.key_map.insert(key, Wrapper { value, expiry }) {
+        if let Some(prev) = self.expiration_times.insert(item, expiry) {
             let size_after_deleting = {
-                let ids_to_expire = self.expiry_map
-                    .get_mut(&prev.expiry)
+                let ids_to_expire = self
+                    .expiration_index
+                    .get_mut(&prev)
                     .expect("the previous entry must have had an expiration time registered");
-                ids_to_expire.remove(&key);
+                ids_to_expire.remove(&item);
                 ids_to_expire.len()
             };
             if size_after_deleting == 0 {
-                self.expiry_map.remove(&prev.expiry);
+                self.expiration_index.remove(&prev);
             }
         }
-        self.expiry_map
+        self.expiration_index
             .entry(expiry)
             .or_insert_with(HashSet::new)
-            .insert(key);
+            .insert(item);
+    }
+
+    fn contains(&mut self, item: u64) -> bool {
+        let now = self.clock.now();
+        self.incremental_clean(now);
+        self.expiration_times.contains_key(&item)
     }
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
-    fn smoke_monotonic() {
-        let mut m = MonotonicImpl::new();
+    fn redacter_smoke_test() {
+        let mut m = ReadTimeRedacter::new();
 
-        assert_eq!(m.get(0), None);
+        assert!(!m.contains(0));
 
-        m.put(0, String::from("foo"), Duration::from_secs(15));
-        assert_eq!(m.get(0), Some("foo"));
-
-        m.clock.advance(Duration::from_secs(10));
-        assert_eq!(m.get(0), Some("foo"));
+        m.insert(0, Duration::from_secs(15));
+        assert!(m.contains(0));
 
         m.clock.advance(Duration::from_secs(10));
-        assert_eq!(m.get(0), None);
+        assert!(m.contains(0));
+
+        m.clock.advance(Duration::from_secs(10));
+        assert!(!m.contains(0));
     }
 
     #[test]
-    fn smoke_incremental() {
-        let mut m = IncrementalImpl::new();
+    fn tree_cleanup_smoke_test() {
+        let mut m = TreeCleanup::new();
 
-        assert_eq!(m.get(0), None);
+        assert!(!m.contains(0));
 
-        m.put(0, String::from("foo"), Duration::from_secs(15));
-        assert_eq!(m.get(0), Some("foo"));
-
-        m.clock.advance(Duration::from_secs(10));
-        assert_eq!(m.get(0), Some("foo"));
+        m.insert(0, Duration::from_secs(15));
+        assert!(m.contains(0));
 
         m.clock.advance(Duration::from_secs(10));
-        assert_eq!(m.get(0), None);
+        assert!(m.contains(0));
+
+        m.clock.advance(Duration::from_secs(10));
+        assert!(!m.contains(0));
     }
 
     #[test]
     fn overwriting_entries_wiped_old_expirations() {
-        let mut m = IncrementalImpl::new();
+        let mut m = TreeCleanup::new();
 
-        assert_eq!(m.get(0), None);
+        assert!(!m.contains(0));
 
-        m.put(0, String::from("foo"), Duration::from_secs(15));
-        assert_eq!(m.get(0), Some("foo"));
+        m.insert(0, Duration::from_secs(15));
+        assert!(m.contains(0));
 
-        m.put(0, String::from("bar"), Duration::from_secs(150));
-        assert_eq!(m.get(0), Some("bar"));
+        m.insert(0, Duration::from_secs(150));
+        assert!(m.contains(0));
 
         m.clock.advance(Duration::from_secs(100));
-        assert_eq!(m.get(0), Some("bar"));
+        assert!(m.contains(0));
     }
 }
