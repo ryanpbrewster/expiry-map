@@ -1,6 +1,6 @@
 [package]
-name = "expmap"
-version = "0.1.0"
+name = "ttlset"
+version = "0.2.0"
 authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
 
 [dependencies]
