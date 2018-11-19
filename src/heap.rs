@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 #[derive(Default)]
 pub struct MutHeap<T>
@@ -15,17 +15,21 @@ where
 {
     pub fn insert(&mut self, item: T) -> Handle {
         let idx = self.items.len();
-        let handle = Handle(Rc::new(Cell::new(idx)));
-        self.items.push(Wrapper {
-            item,
-            handle: handle.clone(),
-        });
+        let handle = Rc::new(Cell::new(idx));
+        let ret = Handle(Rc::downgrade(&handle));
+        self.items.push(Wrapper { item, handle });
         self.percolate_up(idx);
-        handle
+        ret
     }
 
     pub fn pop_max(&mut self) -> Option<T> {
-        unimplemented!()
+        self.items.pop().map(|mut tmp| {
+            if !self.items.is_empty() {
+                ::std::mem::swap(&mut self.items[0], &mut tmp);
+                self.percolate_down(0);
+            }
+            tmp.item
+        })
     }
 
     pub fn peek_max(&mut self) -> Option<&T> {
@@ -34,14 +38,24 @@ where
 
     pub fn increment<F: FnOnce(&mut T)>(&mut self, handle: &Handle, f: F) {
         println!("incrementing item @ {:?}", handle);
-        f(&mut self.items[handle.0.get()].item);
-        self.percolate_up(handle.0.get())
+        let idx = handle
+            .0
+            .upgrade()
+            .expect("handle not present in heap")
+            .get();
+        f(&mut self.items[idx].item);
+        self.percolate_up(idx);
     }
 
     pub fn decrement<F: FnOnce(&mut T)>(&mut self, handle: &Handle, f: F) {
         println!("decrementing item @ {:?}", handle);
-        f(&mut self.items[handle.0.get()].item);
-        self.percolate_down(handle.0.get())
+        let idx = handle
+            .0
+            .upgrade()
+            .expect("handle not present in heap")
+            .get();
+        f(&mut self.items[idx].item);
+        self.percolate_down(idx);
     }
 
     fn percolate_up(&mut self, mut idx: usize) {
@@ -53,8 +67,8 @@ where
             if lowest == idx {
                 break;
             }
-            self.items[idx].handle.0.set(lowest);
-            self.items[lowest].handle.0.set(idx);
+            self.items[idx].handle.set(lowest);
+            self.items[lowest].handle.set(idx);
             self.items.swap(idx, lowest);
             idx = lowest;
         }
@@ -73,8 +87,8 @@ where
             if highest == idx {
                 break;
             }
-            self.items[idx].handle.0.set(highest);
-            self.items[highest].handle.0.set(idx);
+            self.items[idx].handle.set(highest);
+            self.items[highest].handle.set(idx);
             self.items.swap(idx, highest);
             idx = highest;
         }
@@ -82,11 +96,11 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct Handle(Rc<Cell<usize>>);
+pub struct Handle(Weak<Cell<usize>>);
 
 struct Wrapper<T> {
     item: T,
-    handle: Handle,
+    handle: Rc<Cell<usize>>,
 }
 
 #[cfg(test)]
@@ -111,5 +125,17 @@ mod test {
             *x -= 100;
         });
         assert_eq!(heap.peek_max(), Some(&20));
+    }
+
+    #[test]
+    #[should_panic]
+    fn panic_on_expired_handle() {
+        let mut heap = MutHeap::default();
+
+        let a = heap.insert(10);
+        assert_eq!(heap.pop_max(), Some(10));
+        heap.insert(20);
+
+        heap.increment(&a, |_| ());
     }
 }
