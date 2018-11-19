@@ -13,6 +13,7 @@ pub trait Clock {
     fn now(&mut self) -> Instant;
 }
 
+pub mod heap;
 pub mod redactor;
 pub mod tree_cleanup;
 
