@@ -6,14 +6,13 @@ pub trait TtlSet {
     fn contains(&mut self, item: u64) -> bool;
 }
 
-pub trait Clock {
-    fn new() -> Self;
-
+pub trait Clock: Default {
     // &mut for bad reasons, too lazy to make auto_advance threadsafe in FakeClock
     fn now(&mut self) -> Instant;
 }
 
 pub mod heap;
+pub mod heap_cleanup;
 pub mod redactor;
 pub mod tree_cleanup;
 

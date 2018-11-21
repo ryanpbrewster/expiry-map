@@ -4,19 +4,11 @@ use std::time::{Duration, Instant};
 
 use {Clock, TtlSet};
 
+#[derive(Default)]
 pub struct TreeCleanup<C: Clock> {
     clock: C,
     expiration_times: HashMap<u64, Instant>,
     expiration_index: BTreeMap<Instant, HashSet<u64>>,
-}
-impl<C: Clock> TreeCleanup<C> {
-    pub fn new() -> TreeCleanup<C> {
-        TreeCleanup {
-            clock: C::new(),
-            expiration_times: HashMap::new(),
-            expiration_index: BTreeMap::new(),
-        }
-    }
 }
 
 impl<C: Clock> TreeCleanup<C> {
@@ -67,7 +59,7 @@ mod test {
 
     #[test]
     fn tree_cleanup_smoke_test() {
-        let mut m = TreeCleanup::<FakeClock>::new();
+        let mut m = TreeCleanup::<FakeClock>::default();
 
         assert!(!m.contains(0));
 
@@ -83,7 +75,7 @@ mod test {
 
     #[test]
     fn overwriting_entries_wiped_old_expirations() {
-        let mut m = TreeCleanup::<FakeClock>::new();
+        let mut m = TreeCleanup::<FakeClock>::default();
 
         assert!(!m.contains(0));
 

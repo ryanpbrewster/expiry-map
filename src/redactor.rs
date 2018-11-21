@@ -4,18 +4,10 @@ use std::time::{Duration, Instant};
 use {Clock, TtlSet};
 /// A simple TtlSet that keeps track of each item's expiration time.
 /// During a `contains` check, it inspects the expiration time; if it is expired, returns `false`.
+#[derive(Default)]
 pub struct Redactor<C: Clock> {
     clock: C,
     expiration_times: HashMap<u64, Instant>,
-}
-
-impl<C: Clock> Redactor<C> {
-    pub fn new() -> Redactor<C> {
-        Redactor {
-            clock: C::new(),
-            expiration_times: HashMap::new(),
-        }
-    }
 }
 
 impl<C: Clock> TtlSet for Redactor<C> {
@@ -39,7 +31,7 @@ mod test {
 
     #[test]
     fn smoke_test() {
-        let mut m = Redactor::<FakeClock>::new();
+        let mut m = Redactor::<FakeClock>::default();
 
         assert!(!m.contains(0));
 

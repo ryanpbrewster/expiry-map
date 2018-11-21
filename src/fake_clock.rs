@@ -5,14 +5,15 @@ pub struct FakeClock {
     cur: Instant,
     auto_advance: Duration,
 }
-impl Clock for FakeClock {
-    fn new() -> Self {
+impl Default for FakeClock {
+    fn default() -> Self {
         FakeClock {
             cur: Instant::now(),
             auto_advance: Duration::from_millis(1),
         }
     }
-
+}
+impl Clock for FakeClock {
     fn now(&mut self) -> Instant {
         self.cur += self.auto_advance;
         self.cur

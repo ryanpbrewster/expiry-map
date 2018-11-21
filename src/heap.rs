@@ -61,7 +61,7 @@ where
     fn percolate_up(&mut self, mut idx: usize) {
         while idx > 0 {
             let mut lowest = idx;
-            if self.items[idx / 2].item < self.items[idx].item {
+            if self.items[idx / 2].item < self.items[lowest].item {
                 lowest = idx / 2;
             }
             if lowest == idx {
