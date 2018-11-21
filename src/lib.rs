@@ -13,6 +13,7 @@ pub trait Clock: Default {
 
 pub mod heap;
 pub mod heap_cleanup;
+pub mod mut_heap_cleanup;
 pub mod redactor;
 pub mod tree_cleanup;
 

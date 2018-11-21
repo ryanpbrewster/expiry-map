@@ -1,12 +1,20 @@
 use std::cell::Cell;
 use std::rc::{Rc, Weak};
 
-#[derive(Default)]
 pub struct MutHeap<T>
 where
     T: Ord,
 {
     items: Vec<Wrapper<T>>,
+}
+
+impl<T> Default for MutHeap<T>
+where
+    T: Ord,
+{
+    fn default() -> Self {
+        MutHeap { items: Vec::new() }
+    }
 }
 
 impl<T> MutHeap<T>
